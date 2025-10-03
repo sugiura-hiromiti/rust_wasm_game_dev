@@ -43,7 +43,7 @@
             echo -e "System: ${system}"
             echo -e "wasm-pack: $(which wasm-pack 2>/dev/null || echo 'not found')"
             echo -e "rustc:     $(which rustc 2>/dev/null || echo 'not found')"
-            echo -e "cargo:     $(which cargo 2>/dev/null || echo 'not found')\033[0m"
+            echo -e "cargo:     $(which cargo 2>/dev/null || echo 'not found')\033[0m\n"
           '';
         };
       }
