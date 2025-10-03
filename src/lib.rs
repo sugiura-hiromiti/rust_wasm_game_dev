@@ -262,46 +262,34 @@ fn draw() -> JRslt<(),> {
 
 	let async_block = async move {
 		let draw_inner = async || -> JRslt<(),> {
-			let (success_tx, rx,) =
-				futures::channel::oneshot::channel::<JRslt<(),>,>();
-			let success_tx = Rc::new(Mutex::new(Some(success_tx,),),);
-			let error_tx = success_tx.clone();
+			let (tx, rx,) = futures::channel::oneshot::channel::<JRslt<(),>,>();
 
-			let success_cb = Closure::once(move |event: &Event| {
-				console::log_1(event,);
-				if let Some(tx,) = success_tx
-					.lock()
-					.ok()
-					.and_then(|mut acq_mutex| acq_mutex.take(),)
-				{
-					tx.send(Ok((),),).expect(
-						"failed to send success message of loading asset",
-					);
-				}
-			},);
-			let error_cb = Closure::once(move |err| {
-				if let Some(tx,) = error_tx
-					.lock()
-					.ok()
-					.and_then(|mut acq_mutex| acq_mutex.take(),)
-				{
-					tx.send(Err(err,),).expect(
-						"failed to send error message of loading asset",
-					);
-				}
+			let callback = Closure::once(|e: Event| {
+				console::log_1(&e,);
+				if e.type_() == "error" {
+					tx.send(Err(e.into(),),)
+						.expect("failed to send error message from callback",)
+				} else {
+					tx.send(Ok((),),)
+						.expect("failed to send success message from callback",)
+				};
 			},);
 
 			let image = HtmlImageElement::new()?;
 
 			// set callback when loading asset finished
-			image.set_onload(Some(success_cb.as_ref().unchecked_ref(),),);
-			image.set_onerror(Some(error_cb.as_ref().unchecked_ref(),),);
+			image.set_onload(Some(callback.as_ref().unchecked_ref(),),);
+			image.set_onerror(Some(callback.as_ref().unchecked_ref(),),);
 
 			image.set_src("Idle (1).png",);
 			match rx.await {
 				Ok(sent_msg,) => match sent_msg {
-					Ok(_,) => ctx
-						.draw_image_with_html_image_element(&image, 0.0, 0.0,)?,
+					Ok(_,) => {
+						console_log!("load success");
+						ctx.draw_image_with_html_image_element(
+							&image, 0.0, 0.0,
+						)?
+					},
 					Err(e,) => {
 						console_log!("error happen while loading asset");
 						console::error_1(&e,)
