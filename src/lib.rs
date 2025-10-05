@@ -1,5 +1,5 @@
-use crate::engn::Image;
-use crate::engn::Renderer;
+use crate::engn::GameLoop;
+use crate::game::WalkTheDog;
 use anyhow::Result as Rslt;
 use wasm_bindgen::prelude::*;
 use web_sys::console;
@@ -10,6 +10,7 @@ use web_sys::console;
 #[macro_use]
 mod brwsr;
 mod engn;
+mod game;
 
 type JRslt<T,> = Result<T, JsValue,>;
 
@@ -109,57 +110,16 @@ impl<T, E: std::fmt::Debug,> ContainerFixer for Option<Result<T, E,>,> {
 	}
 }
 
-fn draw() -> Rslt<(),> {
-	let async_block = async move {
-		let draw_inner = async || -> Rslt<(),> {
-			let rndrr = Renderer::new("game_canvas",).await?;
-			let img = Image::new_sprite_sheet().await?;
-
-			let mut frame_count = -1;
-			let intrvl_cb = Closure::wrap(Box::new(move || {
-				frame_count = (frame_count + 1) % 8;
-				let intrvl_cb_inner = || -> Rslt<(),> {
-					rndrr.clear();
-
-					let frame_name = format!("Run ({}).png", frame_count + 1);
-					rndrr.draw_sprite_sheet(&img, &frame_name, 300.0, 300.0,)?;
-					Ok((),)
-				};
-
-				match intrvl_cb_inner() {
-					Ok(_,) => {},
-					Err(e,) => log!("{e:?}"),
-				};
-			},) as Box<dyn FnMut(),>,);
-
-			brwsr::window_obj()?
-				.set_interval_with_callback_and_timeout_and_arguments_0(
-					intrvl_cb.as_ref().unchecked_ref(),
-					50,
-				)
-				.unwrap();
-			intrvl_cb.forget();
-
-			Ok((),)
-		};
-
-		if let Err(e,) = draw_inner().await {
-			log!("error happen while drawing: {e}");
-			// console::error_1(&e,);
-		}
-	};
-
-	brwsr::spawn_local(async_block,);
-
-	Ok((),)
-}
-
 // This is like the `main` function, except for JavaScript.
 #[wasm_bindgen(start)]
 pub fn main_js() -> JRslt<(),> {
 	console_error_panic_hook::set_once();
 
-	draw().unwrap();
+	brwsr::spawn_local(async move {
+		let wtd = WalkTheDog::new();
+
+		GameLoop::start(wtd,).await.expect("failed to start game",);
+	},);
 
 	log!("wasm end");
 
