@@ -1,350 +1,155 @@
-use std::ops::Add;
-use std::ops::Div;
-use std::rc::Rc;
-use std::sync::Mutex;
+use crate::engn::Image;
+use crate::engn::Renderer;
+use anyhow::Result as Rslt;
 use wasm_bindgen::prelude::*;
-use web_sys::CanvasRenderingContext2d;
-use web_sys::Event;
-use web_sys::HtmlCanvasElement;
-use web_sys::HtmlImageElement;
 use web_sys::console;
+
+// mod archv;
+
+// this attribute enables using `log!` macro when `brwsr` module is used
+#[macro_use]
+mod brwsr;
+mod engn;
 
 type JRslt<T,> = Result<T, JsValue,>;
 
-macro_rules! console_log {
-    ($($args:expr),*) => {
-        $(
-			  console::log_1(&JsValue::from_str($args,),)
-		  );*
-    };
-}
+trait ContainerFixer {
+	type ErrFlipped;
+	type Flipped;
+	type Consumed;
+	type Transposed;
 
-trait BrowserContext<T,> {
-	fn brwsr_ctx(self, err_msg: &str,) -> JRslt<T,>;
-	fn dom_ctx(self, err_msg: &str,) -> JRslt<T,>
+	fn trans(self,) -> Self::Transposed;
+
+	fn flip_err(self,) -> Self::ErrFlipped;
+	fn flip(self,) -> Self::Flipped;
+
+	fn consume_with<O,>(
+		self,
+		success_op: impl FnOnce(Self::Consumed,) -> O,
+	) -> Option<O,>;
+
+	fn consume(self,) -> Option<Self::Consumed,>
 	where Self: std::marker::Sized {
-		self.brwsr_ctx(&("dom operation failed: ".to_string() + err_msg),)
+		self.consume_with(|c| c,)
 	}
 
-	fn ctx_ctx(self, err_msg: &str,) -> JRslt<T,>
-	where Self: std::marker::Sized {
-		self.brwsr_ctx(&("failed to get context: ".to_owned() + err_msg),)
-	}
+	// NOTE: add flattern functionality
 }
 
-impl<T,> BrowserContext<T,> for Option<T,> {
-	fn brwsr_ctx(self, err_msg: &str,) -> JRslt<T,> {
+impl<T, E1: std::fmt::Debug, E2: std::fmt::Debug,> ContainerFixer
+	for Result<Result<T, E1,>, E2,>
+{
+	type Consumed = T;
+	type ErrFlipped = Result<Result<T, E2,>, E1,>;
+	type Flipped = Self;
+	type Transposed = Self::ErrFlipped;
+
+	fn trans(self,) -> Self::Transposed {
+		self.flip_err()
+	}
+
+	fn flip(self,) -> Self::Flipped {
+		self
+	}
+
+	fn flip_err(self,) -> Self::ErrFlipped {
 		match self {
-			Self::Some(v,) => Ok(v,),
-			Self::None => Err(JsValue::from_str(err_msg,),),
+			Ok(Ok(t,),) => Ok(Ok(t,),),
+			Ok(Err(e1,),) => Err(e1,),
+			Err(e2,) => Ok(Err(e2,),),
+		}
+	}
+
+	fn consume_with<O,>(self, success_op: impl FnOnce(T,) -> O,) -> Option<O,> {
+		match self {
+			Ok(Ok(t,),) => Some(success_op(t,),),
+			Ok(Err(e1,),) => {
+				console::error_1(&JsValue::from_str(&format!("{e1:#?}"),),);
+				None
+			},
+			Err(e2,) => {
+				console::error_1(&JsValue::from_str(&format!("{e2:#?}"),),);
+				None
+			},
 		}
 	}
 }
 
-fn get_canvas_element() -> JRslt<HtmlCanvasElement,> {
-	let canvas = web_sys::window()
-		.dom_ctx("window object not found",)?
-		.document()
-		.dom_ctx("document object not found",)?
-		.get_element_by_id("game_canvas",)
-		.dom_ctx("element with  id `game_canvas` not exist",)?;
-	let canvas = HtmlCanvasElement::unchecked_from_js(JsValue::from(canvas,),);
+impl<T, E: std::fmt::Debug,> ContainerFixer for Option<Result<T, E,>,> {
+	type Consumed = T;
+	type ErrFlipped = Self;
+	type Flipped = Result<Option<T,>, E,>;
+	type Transposed = Self::Flipped;
 
-	Ok(canvas,)
-}
-
-trait CanvasMethodsTyped {
-	fn context_of(&self, context_id: &str,)
-	-> JRslt<CanvasRenderingContext2d,>;
-}
-
-impl CanvasMethodsTyped for HtmlCanvasElement {
-	fn context_of(
-		&self, context_id: &str,
-	) -> JRslt<CanvasRenderingContext2d,> {
-		let ctx = self
-			.get_context(context_id,)?
-			.ctx_ctx(&format!("context id {context_id} does not supported",),)?;
-		let ctx =
-			CanvasRenderingContext2d::unchecked_from_js(JsValue::from(ctx,),);
-		Ok(ctx,)
-	}
-}
-
-trait CanvasDrawBasic {
-	fn triangle(
-		&self,
-		vert1: &Coord2d,
-		vert2: &Coord2d,
-		vert3: &Coord2d,
-		stroke_color: Option<&Rgb,>,
-		fill_color: Option<&Rgb,>,
-	);
-
-	fn triangle_filled(
-		&self,
-		vert1: &Coord2d,
-		vert2: &Coord2d,
-		vert3: &Coord2d,
-		stroke_color: Option<&Rgb,>,
-		fill_color: &Rgb,
-	) {
-		self.triangle(vert1, vert2, vert3, stroke_color, Some(fill_color,),);
+	fn trans(self,) -> Self::Transposed {
+		self.flip()
 	}
 
-	fn triangle_empty(
-		&self,
-		vert1: &Coord2d,
-		vert2: &Coord2d,
-		vert3: &Coord2d,
-		stroke_color: Option<&Rgb,>,
-	) {
-		self.triangle(vert1, vert2, vert3, stroke_color, None,);
+	fn flip(self,) -> Self::Flipped {
+		self.transpose()
 	}
-}
 
-struct Coord2d {
-	w: f64,
-	h: f64,
-}
-
-impl Coord2d {
-	pub fn new(w: f64, h: f64,) -> Self {
-		Self { w, h, }
+	fn flip_err(self,) -> Self::ErrFlipped {
+		self
 	}
-}
 
-impl Add for Coord2d {
-	type Output = Self;
-
-	fn add(self, rhs: Self,) -> Self::Output {
-		Self { w: self.w + rhs.w, h: self.h + rhs.h, }
-	}
-}
-
-impl Add for &Coord2d {
-	type Output = Coord2d;
-
-	fn add(self, rhs: Self,) -> Self::Output {
-		(self.w + rhs.w, self.h + rhs.h,).into()
-	}
-}
-
-impl Div<f64,> for Coord2d {
-	type Output = Self;
-
-	fn div(self, rhs: f64,) -> Self::Output {
-		Self { w: self.w / rhs, h: self.h / rhs, }
-	}
-}
-
-impl Div<f64,> for &Coord2d {
-	type Output = Coord2d;
-
-	fn div(self, rhs: f64,) -> Self::Output {
-		(self.h / rhs, self.w / rhs,).into()
-	}
-}
-
-impl From<(f64, f64,),> for Coord2d {
-	fn from(value: (f64, f64,),) -> Self {
-		Self { w: value.0, h: value.1, }
-	}
-}
-
-struct Rgb {
-	r: u8,
-	g: u8,
-	b: u8,
-}
-
-impl Rgb {
-	pub fn new(r: u8, g: u8, b: u8,) -> Self {
-		Self { r, g, b, }
-	}
-}
-
-impl Add for Rgb {
-	type Output = Self;
-
-	fn add(self, rhs: Self,) -> Self::Output {
-		Self { r: self.r + rhs.r, g: self.g + rhs.g, b: self.b + rhs.b, }
-	}
-}
-
-impl Add for &Rgb {
-	type Output = Rgb;
-
-	fn add(self, rhs: Self,) -> Self::Output {
-		(self.r + rhs.r, self.g + rhs.g, self.b + rhs.b,).into()
-	}
-}
-
-impl Add<(u8, u8, u8,),> for Rgb {
-	type Output = Self;
-
-	fn add(self, rhs: (u8, u8, u8,),) -> Self::Output {
-		Self { r: self.r + rhs.0, g: self.g + rhs.1, b: self.b + rhs.2, }
-	}
-}
-
-impl Add<(u8, u8, u8,),> for &Rgb {
-	type Output = Rgb;
-
-	fn add(self, rhs: (u8, u8, u8,),) -> Self::Output {
-		(self.r + rhs.0, self.g + rhs.1, self.b + rhs.2,).into()
-	}
-}
-
-impl From<(u8, u8, u8,),> for Rgb {
-	fn from(value: (u8, u8, u8,),) -> Self {
-		Self { r: value.0, g: value.1, b: value.2, }
-	}
-}
-
-impl CanvasDrawBasic for CanvasRenderingContext2d {
-	fn triangle(
-		&self,
-		vert1: &Coord2d,
-		vert2: &Coord2d,
-		vert3: &Coord2d,
-		stroke_color: Option<&Rgb,>,
-		fill_color: Option<&Rgb,>,
-	) {
-		self.move_to(vert1.w, vert1.h,);
-		self.begin_path();
-		self.line_to(vert2.w, vert2.h,);
-		self.line_to(vert3.w, vert3.h,);
-		self.line_to(vert1.w, vert1.h,);
-		self.close_path();
-
-		if let Some(Rgb { r, g, b, },) = stroke_color {
-			self.set_stroke_style_str(&format!("rgb({r} {g} {b})"),);
-		}
-		self.stroke();
-
-		if let Some(Rgb { r, g, b, },) = fill_color {
-			self.set_fill_style_str(&format!("rgb({r} {g} {b})"),);
-			self.fill();
+	fn consume_with<O,>(
+		self,
+		success_op: impl FnOnce(Self::Consumed,) -> O,
+	) -> Option<O,> {
+		match self {
+			Some(Ok(t,),) => Some(success_op(t,),),
+			Some(Err(e,),) => {
+				log!("{e:?}",);
+				None
+			},
+			None => None,
 		}
 	}
 }
 
-fn draw_sierpinski(
-	ctx: &CanvasRenderingContext2d,
-	vert1: &Coord2d,
-	vert2: &Coord2d,
-	vert3: &Coord2d,
-	fill_color: &Rgb,
-	rec_count: usize,
-) {
-	if rec_count == 0 {
-		return;
-	}
-
-	ctx.triangle_filled(vert1, vert2, vert3, None, fill_color,);
-
-	let bw12 = (vert1 + vert2) / 2.0;
-	let bw23 = (vert3 + vert2) / 2.0;
-	let bw31 = (vert1 + vert3) / 2.0;
-
-	let mut fill_color = [0; 3];
-	rand::fill(&mut fill_color,);
-	let fill_color = (fill_color[0], fill_color[1], fill_color[2],).into();
-	draw_sierpinski(ctx, vert1, &bw12, &bw31, &fill_color, rec_count - 1,);
-	draw_sierpinski(ctx, &bw12, vert2, &bw23, &fill_color, rec_count - 1,);
-	draw_sierpinski(ctx, &bw23, &bw31, vert3, &fill_color, rec_count - 1,);
-}
-
-fn draw() -> JRslt<(),> {
-	let canvas = get_canvas_element()?;
-	let ctx = canvas.context_of("2d",)?;
-
+fn draw() -> Rslt<(),> {
 	let async_block = async move {
-		let draw_inner = async || -> JRslt<(),> {
-			let (success_tx, rx,) =
-				futures::channel::oneshot::channel::<JRslt<(),>,>();
-			let success_tx = Rc::new(Mutex::new(Some(success_tx,),),);
-			let error_tx = success_tx.clone();
+		let draw_inner = async || -> Rslt<(),> {
+			let rndrr = Renderer::new("game_canvas",).await?;
+			let img = Image::new_sprite_sheet().await?;
 
-			let success_cb = Closure::once(move |event: &Event| {
-				console::log_1(event,);
-				if let Some(tx,) = success_tx
-					.lock()
-					.ok()
-					.and_then(|mut acq_mutex| acq_mutex.take(),)
-				{
-					tx.send(Ok((),),).expect(
-						"failed to send success message of loading asset",
-					);
-				}
-			},);
-			let error_cb = Closure::once(move |err| {
-				if let Some(tx,) = error_tx
-					.lock()
-					.ok()
-					.and_then(|mut acq_mutex| acq_mutex.take(),)
-				{
-					tx.send(Err(err,),).expect(
-						"failed to send error message of loading asset",
-					);
-				}
-			},);
+			let mut frame_count = -1;
+			let intrvl_cb = Closure::wrap(Box::new(move || {
+				frame_count = (frame_count + 1) % 8;
+				let intrvl_cb_inner = || -> Rslt<(),> {
+					rndrr.clear();
 
-			let image = HtmlImageElement::new()?;
+					let frame_name = format!("Run ({}).png", frame_count + 1);
+					rndrr.draw_sprite_sheet(&img, &frame_name, 300.0, 300.0,)?;
+					Ok((),)
+				};
 
-			// set callback when loading asset finished
-			image.set_onload(Some(success_cb.as_ref().unchecked_ref(),),);
-			image.set_onerror(Some(error_cb.as_ref().unchecked_ref(),),);
+				match intrvl_cb_inner() {
+					Ok(_,) => {},
+					Err(e,) => log!("{e:?}"),
+				};
+			},) as Box<dyn FnMut(),>,);
 
-			image.set_src("Idle (1).png",);
-			match rx.await {
-				Ok(sent_msg,) => match sent_msg {
-					Ok(_,) => ctx
-						.draw_image_with_html_image_element(&image, 0.0, 0.0,)?,
-					Err(e,) => {
-						console_log!("error happen while loading asset");
-						console::error_1(&e,)
-					},
-				},
-				Err(e,) => {
-					let e = JsValue::from_str(&e.to_string(),);
-					console_log!(
-						"error happen while sending message from callback"
-					);
-					console::error_1(&e,);
-				},
-			};
+			brwsr::window_obj()?
+				.set_interval_with_callback_and_timeout_and_arguments_0(
+					intrvl_cb.as_ref().unchecked_ref(),
+					50,
+				)
+				.unwrap();
+			intrvl_cb.forget();
 
-			let line_len = 300.0;
-			let eq_tri_h = line_len * 3.0_f64.sqrt();
-
-			let vert1 = (line_len, 0.0,).into();
-			let vert2 = (0.0, eq_tri_h,).into();
-			let vert3 = (line_len * 2.0, eq_tri_h,).into();
-
-			ctx.triangle_empty(
-				&(0.0, 0.0,).into(),
-				&(0.0, 100.0,).into(),
-				&(100.0, 0.0,).into(),
-				Some(&(255, 255, 255,).into(),),
-			);
-
-			let mut fill_color = [0; 3];
-			rand::fill(&mut fill_color,);
-			let fill_color =
-				(fill_color[0], fill_color[1], fill_color[2],).into();
-			draw_sierpinski(&ctx, &vert1, &vert2, &vert3, &fill_color, 6,);
 			Ok((),)
 		};
 
 		if let Err(e,) = draw_inner().await {
-			console_log!("error happen while drawing!!!!!!!!!");
-			console::error_1(&e,);
+			log!("error happen while drawing: {e}");
+			// console::error_1(&e,);
 		}
 	};
 
-	wasm_bindgen_futures::spawn_local(async_block,);
+	brwsr::spawn_local(async_block,);
 
 	Ok((),)
 }
@@ -354,11 +159,9 @@ fn draw() -> JRslt<(),> {
 pub fn main_js() -> JRslt<(),> {
 	console_error_panic_hook::set_once();
 
-	console_log!("wth");
+	draw().unwrap();
 
-	draw()?;
-
-	console_log!("wasm end", "goodbye");
+	log!("wasm end");
 
 	Ok((),)
 }
