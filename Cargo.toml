@@ -50,6 +50,7 @@ features = [
 	"Event",
 	"Response",
 	"Performance",
+	"KeyboardEvent",
 ]
 
 [dependencies.serde]
