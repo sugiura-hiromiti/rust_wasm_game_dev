@@ -213,8 +213,10 @@ impl GameLoop {
 
 		*f.borrow_mut() = Some(raf_closure(move |perf| {
 			game_loop.accumulated_delta += (perf - game_loop.last_frame) as f32;
-			for _ in 0..((game_loop.accumulated_delta / FRAME_SIZE) as i32) {
+
+			while game_loop.accumulated_delta > FRAME_SIZE {
 				game.update();
+				game_loop.accumulated_delta -= FRAME_SIZE;
 			}
 			game_loop.last_frame = perf;
 			game.draw(&rndrr,);
