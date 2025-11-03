@@ -2,11 +2,11 @@ use crate::Rslt;
 use crate::engn::Game;
 use crate::engn::Image;
 use crate::engn::KeyboardState;
-use crate::engn::Point;
 use crate::engn::Renderer;
 use crate::game::red_hat_boy_states::Idle;
 use crate::game::red_hat_boy_states::RedHatBoyState;
 use crate::game::red_hat_boy_states::Running;
+use crate::game::red_hat_boy_states::Sliding;
 
 mod red_hat_boy_states;
 
@@ -14,7 +14,8 @@ mod red_hat_boy_states;
 const IDLE_CARDS: u8 = 10;
 /// count of running cards
 const RUN_CARDS: u8 = 8;
-const WALK_SPEED: i16 = 3;
+/// count of sliding cards
+const SLIDE_CARDS: u8 = 5;
 
 pub struct WalkTheDog {
 	renderer: Option<Renderer,>,
@@ -42,26 +43,28 @@ impl Game for WalkTheDog {
 			return;
 		};
 
-		rhb.update(kb_state,);
+		let pressed = |code| kb_state.is_pressed(code,);
+
+		let event = if pressed("KeyD",) {
+			GameEvent::Slide
+		} else if pressed("KeyF",) {
+			GameEvent::Run
+		} else {
+			GameEvent::Idle
+		};
+
+		rhb.update(event,);
 	}
 
 	fn draw(&self,) {
 		let Some(ref rndrr,) = self.renderer else {
+			log!("no renderer");
 			return;
 		};
 		rndrr.clear();
 		if let Some(rhb,) = self.rhb.as_ref() {
 			rhb.draw(rndrr,).expect("error happen while drawing rhb",);
 		}
-		// let frame_name = format!("Run ({}).png", (self.frame / 3) + 1);
-		//
-		// if let Some(r,) = self.renderer.as_ref() {
-		// 	r.clear();
-		// 	if let Some(RedHatBoy { image, .. },) = self.rhb.as_ref() {
-		// 		r.draw_sprite_sheet(image, &frame_name, self.pos,)
-		// 			.expect("failed to draw sheet",);
-		// 	}
-		// }
 	}
 }
 
@@ -86,35 +89,9 @@ impl RedHatBoy {
 		)
 	}
 
-	fn update(&mut self, kb_state: &KeyboardState,) {
-		let vel = Self::keyboard_velocity(kb_state,);
-		let event = if vel.x == 0 && vel.y == 0 {
-			GameEvent::Idle
-		} else {
-			GameEvent::Run { vel, }
-		};
-
+	fn update(&mut self, event: GameEvent,) {
 		self.state_machine = self.state_machine.transition(event,);
 		self.state_machine = self.state_machine.update();
-	}
-
-	fn keyboard_velocity(kb_state: &KeyboardState,) -> Point {
-		let mut vel = Point { x: 0, y: 0, };
-		let pressed = |code| kb_state.is_pressed(code,);
-		if pressed("KeyA",) {
-			vel.x -= WALK_SPEED;
-		}
-		if pressed("KeyF",) {
-			vel.x += WALK_SPEED;
-		}
-		if pressed("KeyS",) {
-			vel.y += WALK_SPEED;
-		}
-		if pressed("KeyD",) {
-			vel.y -= WALK_SPEED;
-		}
-
-		vel
 	}
 }
 
@@ -123,6 +100,8 @@ enum RedHatBoyStateMachine {
 	Idle(RedHatBoyState<Idle,>,),
 	#[strum(to_string = "Run")]
 	Running(RedHatBoyState<Running,>,),
+	#[strum(to_string = "Slide")]
+	Sliding(RedHatBoyState<Sliding,>,),
 }
 
 impl From<RedHatBoyState<Running,>,> for RedHatBoyStateMachine {
@@ -131,28 +110,35 @@ impl From<RedHatBoyState<Running,>,> for RedHatBoyStateMachine {
 	}
 }
 
-#[derive(Clone, Copy,)]
+impl From<RedHatBoyState<Idle,>,> for RedHatBoyStateMachine {
+	fn from(value: RedHatBoyState<Idle,>,) -> Self {
+		Self::Idle(value,)
+	}
+}
+
+impl From<RedHatBoyState<Sliding,>,> for RedHatBoyStateMachine {
+	fn from(value: RedHatBoyState<Sliding,>,) -> Self {
+		Self::Sliding(value,)
+	}
+}
+
+#[derive(Clone, Copy, Debug, Default,)]
 pub enum GameEvent {
+	#[default]
 	Idle,
-	Run { vel: Point, },
+	Run,
+	Slide,
 }
 
 impl RedHatBoyStateMachine {
 	fn transition(self, event: GameEvent,) -> Self {
 		match (self, event,) {
-			(Self::Idle(mut state,), GameEvent::Idle,) => {
-				state.reset();
-				Self::Idle(state,)
-			},
-			(Self::Idle(state,), GameEvent::Run { vel, },) => {
-				state.run(vel,).into()
-			},
-			(Self::Running(state,), GameEvent::Idle,) => {
-				Self::Idle(state.idle(),)
-			},
-			(Self::Running(state,), GameEvent::Run { vel, },) => {
-				Self::Running(state.with_velocity(vel,),)
-			},
+			(Self::Idle(state,), GameEvent::Run,) => state.run().into(),
+			(Self::Running(state,), GameEvent::Idle,) => state.idle().into(),
+			(Self::Running(state,), GameEvent::Slide,) => state.slide().into(),
+			(Self::Sliding(state,), GameEvent::Idle,) => state.idle().into(),
+			(Self::Sliding(state,), GameEvent::Run,) => state.run().into(),
+			_ => self,
 		}
 	}
 
@@ -165,18 +151,23 @@ impl RedHatBoyStateMachine {
 		match self {
 			Self::Idle(_,) => IDLE_CARDS,
 			Self::Running(_,) => RUN_CARDS,
+			Self::Sliding(_,) => SLIDE_CARDS,
 		}
 	}
 
 	fn update(self,) -> Self {
 		match self {
-			Self::Idle(mut red_hat_boy_state,) => {
-				red_hat_boy_state.update();
-				Self::Idle(red_hat_boy_state,)
+			Self::Idle(mut state,) => {
+				state.update();
+				Self::Idle(state,)
 			},
-			Self::Running(mut red_hat_boy_state,) => {
-				red_hat_boy_state.update();
-				Self::Running(red_hat_boy_state,)
+			Self::Running(mut state,) => {
+				state.update();
+				Self::Running(state,)
+			},
+			Self::Sliding(mut state,) => {
+				state.update();
+				Self::Sliding(state,)
 			},
 		}
 	}

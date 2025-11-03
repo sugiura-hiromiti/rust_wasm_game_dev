@@ -4,6 +4,14 @@ use std::marker::PhantomData;
 
 const FLOOR: i16 = 475;
 
+const RUN_SPEED: i16 = 3;
+/// velocity of idle state
+const IDLE_VEL: Point = Point { x: 0, y: 0, };
+/// velocity of run state
+const RUN_VEL: Point = Point { x: RUN_SPEED, y: 0, };
+/// velocity of slide state
+const SLIDE_VEL: Point = RUN_VEL;
+
 #[derive(Clone, Copy,)]
 pub(super) struct RedHatBoyState<S,> {
 	context: RedHatBoyContext,
@@ -11,23 +19,23 @@ pub(super) struct RedHatBoyState<S,> {
 	_state:  PhantomData<S,>,
 }
 
-impl<S,> RedHatBoyState<S,> {
-	pub(super) fn update(&mut self,) {
-		self.context.update();
-	}
-}
+impl<S,> RedHatBoyState<S,> {}
 
 #[derive(Clone, Copy,)]
 pub(super) struct RedHatBoyContext {
 	pub frame: u8,
 	pub pos:   Point,
-	pub vel:   Point,
 }
 
 impl RedHatBoyContext {
-	fn update(&mut self,) {
+	fn update(&mut self, vel: Point,) {
 		self.frame = self.frame.wrapping_add(1,);
-		self.pos += self.vel;
+		self.pos += vel;
+	}
+
+	fn reset_frame(mut self,) -> Self {
+		self.frame = 0;
+		self
 	}
 }
 
@@ -35,6 +43,8 @@ impl RedHatBoyContext {
 pub(super) struct Idle;
 #[derive(Clone, Copy,)]
 pub(super) struct Running;
+#[derive(Clone, Copy,)]
+pub(super) struct Sliding;
 
 impl RedHatBoyState<Idle,> {
 	pub fn new() -> Self {
@@ -42,35 +52,60 @@ impl RedHatBoyState<Idle,> {
 			context: RedHatBoyContext {
 				frame: 0,
 				pos:   Point { x: 0, y: FLOOR, },
-				vel:   Point { x: 0, y: 0, },
 			},
 			_state:  PhantomData,
 		}
 	}
 
-	pub fn run(self, vel: Point,) -> RedHatBoyState<Running,> {
-		let mut context = self.context;
-		context.frame = 0;
-		context.vel = vel;
-		RedHatBoyState { context, _state: PhantomData, }
+	pub fn run(self,) -> RedHatBoyState<Running,> {
+		RedHatBoyState {
+			context: self.context.reset_frame(),
+			_state:  PhantomData,
+		}
 	}
 
-	pub fn reset(&mut self,) {
-		self.context.vel = Point { x: 0, y: 0, };
+	pub fn update(&mut self,) {
+		self.context.update(IDLE_VEL,);
 	}
 }
 
 impl RedHatBoyState<Running,> {
-	pub fn with_velocity(mut self, vel: Point,) -> Self {
-		self.context.vel = vel;
-		self
+	pub fn idle(self,) -> RedHatBoyState<Idle,> {
+		RedHatBoyState {
+			context: self.context.reset_frame(),
+			_state:  PhantomData,
+		}
 	}
 
+	pub fn slide(self,) -> RedHatBoyState<Sliding,> {
+		RedHatBoyState {
+			context: self.context.reset_frame(),
+			_state:  PhantomData,
+		}
+	}
+
+	pub fn update(&mut self,) {
+		self.context.update(RUN_VEL,);
+	}
+}
+
+impl RedHatBoyState<Sliding,> {
 	pub fn idle(self,) -> RedHatBoyState<Idle,> {
-		let mut context = self.context;
-		context.frame = 0;
-		context.vel = Point { x: 0, y: 0, };
-		RedHatBoyState { context, _state: PhantomData, }
+		RedHatBoyState {
+			context: self.context.reset_frame(),
+			_state:  PhantomData,
+		}
+	}
+
+	pub fn run(self,) -> RedHatBoyState<Running,> {
+		RedHatBoyState {
+			context: self.context.reset_frame(),
+			_state:  PhantomData,
+		}
+	}
+
+	pub fn update(&mut self,) {
+		self.context.update(SLIDE_VEL,);
 	}
 }
 
@@ -79,6 +114,7 @@ impl RedHatBoyStateMachine {
 		match self {
 			Self::Idle(red_hat_boy_state,) => &red_hat_boy_state.context,
 			Self::Running(red_hat_boy_state,) => &red_hat_boy_state.context,
+			Self::Sliding(red_hat_boy_state,) => &red_hat_boy_state.context,
 		}
 	}
 }

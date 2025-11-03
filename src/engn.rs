@@ -316,7 +316,6 @@ impl KeyboardState {
 					self.set_released(&event.code(),)
 				},
 				_ => {
-					// log!("prsd kys: {:?}", self.pressed_keys);
 					break;
 				},
 			}
@@ -324,7 +323,7 @@ impl KeyboardState {
 	}
 }
 
-#[derive(Clone, Copy,)]
+#[derive(Clone, Copy, Default, Debug,)]
 pub struct Point {
 	pub x: i16,
 	pub y: i16,
